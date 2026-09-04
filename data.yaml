@@ -1,0 +1,14 @@
+path: D:\DATA C\Projek\Detection Object - Yolo8
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 11
+names: ['gergaji_besi', 'gergaji_kayu', 'gunting', 'gunting_plat', 'kunci_t', 'meteran', 'penggaris_siku', 'tang_rivet', 'tang_scun_hidrolik', 'tekiro_c_clamp', 'water_pass']
+
+roboflow:
+  workspace: abdul-aziz-firdaus
+  project: workshop-tools-i20wi
+  version: 2
+  license: Private
+  url: https://app.roboflow.com/abdul-aziz-firdaus/workshop-tools-i20wi/2
