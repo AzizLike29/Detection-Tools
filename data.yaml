@@ -8,6 +8,6 @@ names: ['gergaji_besi', 'gergaji_kayu', 'gunting', 'gunting_plat', 'kunci_t', 'm
 roboflow:
   workspace: abdul-aziz-firdaus
   project: workshop-tools-i20wi
-  version: 3
+  version: 5
   license: CC BY 4.0
-  url: https://universe.roboflow.com/abdul-aziz-firdaus/workshop-tools-i20wi/dataset/3
+  url: https://universe.roboflow.com/abdul-aziz-firdaus/workshop-tools-i20wi/dataset/5

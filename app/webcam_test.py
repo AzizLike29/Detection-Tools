@@ -86,7 +86,7 @@ while True:
     n += 1
 
     if n % 3 == 0:
-        last_result = yolo.predict(frame, conf=0.45, imgsz=640, verbose=False)[0]
+        last_result = yolo.predict(frame, conf=0.70, imgsz=640, verbose=False)[0]
         alat = [last_result.names[int(c)] for c in last_result.boxes.cls] if last_result.boxes else []
 
     if n % 10 == 0:
