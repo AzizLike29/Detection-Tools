@@ -1,7 +1,7 @@
+import time
 from datetime import datetime
 from pathlib import Path
 from threading import Thread
-import time
 
 import cv2
 import numpy as np
@@ -25,7 +25,6 @@ app.prepare(ctx_id=0, det_size=(320, 320))
 data = np.load(str(ROOT / "gallery_embeddings.npz"), allow_pickle=True)
 GALLERY_NAMES = data["names"]
 GALLERY_EMB = data["embeddings"]
-last_saved = {}
 speaking = False
 
 
@@ -79,6 +78,9 @@ alat = []
 faces = []
 last_result = None
 
+dipinjam = {}
+last_event = {}
+
 while True:
     ok, frame = cap.read()
     if not ok:
@@ -87,7 +89,11 @@ while True:
 
     if n % 3 == 0:
         last_result = yolo.predict(frame, conf=0.70, imgsz=640, verbose=False)[0]
-        alat = [last_result.names[int(c)] for c in last_result.boxes.cls] if last_result.boxes else []
+        alat = (
+            [last_result.names[int(c)] for c in last_result.boxes.cls]
+            if last_result.boxes
+            else []
+        )
 
     if n % 10 == 0:
         faces = app.get(frame)
@@ -97,26 +103,33 @@ while True:
         shown = app.draw_on(shown, faces)
 
     now = time.time()
+    jam = datetime.now().strftime("%H.%M")
     for face in faces:
         nama, skor = identify(face)
-        if nama == "unknown":
+        if nama == "unknown" or not alat:
             continue
-        if not alat:
+        if now - last_event.get(nama, 0) < SAVE_EVERY:
             continue
+        last_event[nama] = now
 
-        daftar = " dan ".join(a.replace("_", " ") for a in dict.fromkeys(alat))
-        msg = f"{nama} membawa {daftar}"
-        print(msg)
-        ucap(msg)
+        punya = dipinjam.setdefault(nama, set())
+        for tool in dict.fromkeys(alat):
+            nama_alat = tool.replace("_", " ")
+            if tool not in punya:
+                punya.add(tool)
+                aksi = "meminjam"
+            else:
+                punya.discard(tool)
+                aksi = "mengembalikan"
 
-        if now - last_saved.get(nama, 0) >= SAVE_EVERY:
-            last_saved[nama] = now
-            for tool in dict.fromkeys(alat):
-                folder = SAVE / tool.replace("_", " ")
-                folder.mkdir(exist_ok=True)
-                out = folder / f"{nama}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-                cv2.imwrite(str(out), shown)
-                print("Tersimpan", out)
+            ucap(f"{nama} {aksi} alat {nama_alat}")
+            print(f"{nama} {aksi} alat {nama_alat} jam {jam}")
+
+            folder = SAVE / nama_alat
+            folder.mkdir(exist_ok=True)
+            out = folder / f"{nama}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+            cv2.imwrite(str(out), shown)
+            print("Tersimpan", out)
 
     cv2.imshow("Tools + Wajah", shown)
     if cv2.waitKey(1) & 0xFF == ord("q"):
