@@ -14,6 +14,7 @@ ROOT = Path(r"D:\DATA C\Projek\Detection Object - Yolo8")
 SAVE = ROOT / "captures"
 THRESH = 0.40
 SAVE_EVERY = 3.0
+STABIL_MIN = 3
 
 SAVE.mkdir(exist_ok=True)
 pygame.mixer.init()
@@ -64,9 +65,20 @@ def ucap(teks):
     Thread(target=run, daemon=True).start()
 
 
+def catat(nama, aksi, tool, jam, shown):
+    nama_alat = tool.replace("_", " ")
+    ucap(f"{nama} {aksi} alat {nama_alat}")
+    print(f"{nama} {aksi} alat {nama_alat} jam {jam}")
+    folder = SAVE / nama_alat
+    folder.mkdir(exist_ok=True)
+    out = folder / f"{nama}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+    cv2.imwrite(str(out), shown)
+    print("Tersimpan", out)
+
+
 cap = cv2.VideoCapture(0)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 if not cap.isOpened():
     raise RuntimeError("Kamera tidak bisa dibuka")
@@ -77,8 +89,9 @@ n = 0
 alat = []
 faces = []
 last_result = None
-
-dipinjam = {}
+alat_di_rak = None
+kandidat = None
+stabil = 0
 last_event = {}
 
 while True:
@@ -87,49 +100,60 @@ while True:
         break
     n += 1
 
+    if n % 10 == 0:
+        faces = app.get(frame)
+
+    shown = frame.copy()
+    if last_result is not None:
+        shown = last_result.plot()
+    if faces:
+        shown = app.draw_on(shown, faces)
+
     if n % 3 == 0:
-        last_result = yolo.predict(frame, conf=0.70, imgsz=640, verbose=False)[0]
+        last_result = yolo.predict(frame, conf=0.40, imgsz=1280, iou=0.5, verbose=False)[0]
         alat = (
             [last_result.names[int(c)] for c in last_result.boxes.cls]
             if last_result.boxes
             else []
         )
+        shown = last_result.plot()
+        if faces:
+            shown = app.draw_on(shown, faces)
 
-    if n % 10 == 0:
-        faces = app.get(frame)
-
-    shown = last_result.plot() if last_result is not None else frame.copy()
-    if faces:
-        shown = app.draw_on(shown, faces)
-
-    now = time.time()
-    jam = datetime.now().strftime("%H.%M")
-    for face in faces:
-        nama, skor = identify(face)
-        if nama == "unknown" or not alat:
-            continue
-        if now - last_event.get(nama, 0) < SAVE_EVERY:
-            continue
-        last_event[nama] = now
-
-        punya = dipinjam.setdefault(nama, set())
-        for tool in dict.fromkeys(alat):
-            nama_alat = tool.replace("_", " ")
-            if tool not in punya:
-                punya.add(tool)
-                aksi = "meminjam"
-            else:
-                punya.discard(tool)
-                aksi = "mengembalikan"
-
-            ucap(f"{nama} {aksi} alat {nama_alat}")
-            print(f"{nama} {aksi} alat {nama_alat} jam {jam}")
-
-            folder = SAVE / nama_alat
-            folder.mkdir(exist_ok=True)
-            out = folder / f"{nama}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-            cv2.imwrite(str(out), shown)
-            print("Tersimpan", out)
+        sekarang = set(alat)
+        if alat_di_rak is None:
+            alat_di_rak = sekarang
+            print("Baseline rak:", sorted(alat_di_rak))
+        elif sekarang == alat_di_rak:
+            kandidat = None
+            stabil = 0
+        elif sekarang == kandidat:
+            stabil += 1
+            if stabil >= STABIL_MIN:
+                hilang = alat_di_rak - sekarang
+                muncul = sekarang - alat_di_rak
+                nama = None
+                for face in faces:
+                    n_wajah, _ = identify(face)
+                    if n_wajah != "unknown":
+                        nama = n_wajah
+                        break
+                now = time.time()
+                jam = datetime.now().strftime("%H.%M")
+                if nama and (hilang or muncul):
+                    if now - last_event.get(nama, 0) >= SAVE_EVERY:
+                        last_event[nama] = now
+                        for tool in sorted(hilang):
+                            catat(nama, "meminjam", tool, jam, shown)
+                        for tool in sorted(muncul):
+                            catat(nama, "mengembalikan", tool, jam, shown)
+                alat_di_rak = sekarang
+                kandidat = None
+                stabil = 0
+                print("Rak sekarang:", sorted(alat_di_rak))
+        else:
+            kandidat = sekarang
+            stabil = 1
 
     cv2.imshow("Tools + Wajah", shown)
     if cv2.waitKey(1) & 0xFF == ord("q"):
