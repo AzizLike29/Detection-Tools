@@ -2,12 +2,12 @@ train: ../train/images
 val: ../valid/images
 test: ../test/images
 
-nc: 11
-names: ['gergaji_besi', 'gergaji_kayu', 'gunting', 'gunting_plat', 'kunci_t', 'meteran', 'penggaris_siku', 'tang_rivet', 'tang_scun_hidrolik', 'tekiro_c_clamp', 'water_pass']
+nc: 13
+names: ['gergaji_besi', 'gergaji_kayu', 'gun_lem', 'gunting', 'gunting_plat', 'kunci_t', 'meteran', 'penggaris_siku', 'solder_electrical', 'tang_rivet', 'tang_scun_hidrolik', 'tekiro_c_clamp', 'water_pass']
 
 roboflow:
   workspace: abdul-aziz-firdaus
   project: workshop-tools-i20wi
-  version: 5
+  version: 6
   license: CC BY 4.0
-  url: https://universe.roboflow.com/abdul-aziz-firdaus/workshop-tools-i20wi/dataset/5
+  url: https://universe.roboflow.com/abdul-aziz-firdaus/workshop-tools-i20wi/dataset/6
