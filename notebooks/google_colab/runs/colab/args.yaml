@@ -10,7 +10,7 @@ imgsz: 640
 save: true
 save_period: -1
 cache: false
-device: '0'
+device: "0"
 workers: 8
 project: /content/drive/MyDrive/Detection Object - Yolo8/runs
 name: colab
@@ -40,12 +40,13 @@ val: true
 split: val
 save_json: false
 conf: null
-iou: 0.7
+iou: null
 max_det: 300
 quantize: null
 dnn: false
 plots: true
-end2end: null
+nms: null
+tile: false
 source: null
 vid_stride: 1
 stream_buffer: false
@@ -65,13 +66,11 @@ show_conf: true
 show_boxes: true
 line_width: null
 format: torchscript
-keras: false
 optimize: false
 dynamic: false
 simplify: true
 opset: null
 workspace: null
-nms: false
 lr0: 0.01
 lrf: 0.01
 momentum: 0.937
