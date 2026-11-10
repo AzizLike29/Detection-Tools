@@ -1,8 +1,8 @@
 
-Workshop-Tools - v6 2026-11-09 4:12pm
+Workshop-Tools - v7 2026-11-10 9:50am
 ==============================
 
-This dataset was exported via roboflow.com on November 9, 2026 at 9:12 AM GMT
+This dataset was exported via roboflow.com on November 10, 2026 at 2:51 AM GMT
 
 Roboflow is an end-to-end computer vision platform that helps you
 * collaborate with your team on computer vision projects
@@ -22,7 +22,7 @@ Workshop-Tools are annotated in YOLOv8 format.
 
 The following pre-processing was applied to each image:
 * Auto-orientation of pixel data (with EXIF-orientation stripping)
-* Resize to 640x640 (Stretch)
+* Resize to 640x640 (Fit (black edges))
 
 No image augmentation techniques were applied.
 
