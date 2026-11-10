@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT = Path(r"D:\DATA C\Projek\Detection Object - Yolo8")
 STATE_PATH = ROOT / "app_state.json"
 
-CAM1 = 0
+CAM1 = 1
 CAM2 = 1
 CAM3 = 1
 
