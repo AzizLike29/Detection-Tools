@@ -9,13 +9,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from shared_state import (
     CAM2,
     CAM3,
-    IMGSZ,
+    DEVICE,
     INVENTORY_EVERY,
     INVENTORY_EVERY_FRAMES,
     ROOT,
     STABIL_MIN,
-    YOLO_CONF,
+    draw_detections,
     get_borrowed,
+    run_yolo,
 )
 from tts_util import ucap
 
@@ -30,7 +31,7 @@ if not cap.isOpened():
 
 if CAM3 == CAM2:
     print("Peringatan: CAM3 dan CAM2 index sama. Jalankan satu kamera saja agar tidak patah.")
-print("Cam3 inventori. Baseline diambil otomatis. Q keluar")
+print(f"Cam3 inventori (device={DEVICE}). Baseline diambil otomatis. Q keluar")
 
 n = 0
 last_result = None
@@ -50,9 +51,7 @@ while True:
     n += 1
 
     if n % INVENTORY_EVERY_FRAMES == 0:
-        last_result = yolo.predict(
-            frame, conf=YOLO_CONF, imgsz=IMGSZ, verbose=False, device="cpu"
-        )[0]
+        last_result = run_yolo(yolo, frame)
         tools = (
             [last_result.names[int(c)] for c in last_result.boxes.cls]
             if last_result.boxes
@@ -90,7 +89,7 @@ while True:
                 alerted.discard(tool)
                 print("Kembali terdeteksi:", tool)
 
-    shown = last_result.plot() if last_result is not None else frame
+    shown = draw_detections(frame, last_result)
     status = f"Baseline: {len(baseline) if baseline else 0} | Alert: {len(alerted)}"
     cv2.putText(
         shown, status, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2

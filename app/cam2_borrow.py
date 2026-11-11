@@ -11,16 +11,17 @@ from shared_state import (
     CAM1,
     CAM2,
     CAPTURE_DIR,
-    IMGSZ,
+    DEVICE,
     ROOT,
     SAVE_EVERY,
     STABIL_MIN,
-    YOLO_CONF,
     YOLO_EVERY,
     add_borrowed,
+    draw_detections,
     get_borrowed,
     get_user,
     remove_borrowed,
+    run_yolo,
 )
 from tts_util import ucap
 
@@ -35,7 +36,7 @@ if not cap.isOpened():
 
 if CAM1 == CAM2:
     print("Peringatan: CAM1 dan CAM2 index sama. Jalankan satu kamera saja agar tidak patah.")
-print("Cam2 pinjam/kembali. Arahkan tools ke kamera. Q keluar")
+print(f"Cam2 pinjam/kembali (device={DEVICE}). Arahkan tools ke kamera. Q keluar")
 
 n = 0
 last_result = None
@@ -76,9 +77,7 @@ while True:
     label = f"Sesi: {user}" if user else "Sesi: belum konfirmasi (Cam1)"
 
     if n % YOLO_EVERY == 0:
-        last_result = yolo.predict(
-            frame, conf=YOLO_CONF, imgsz=IMGSZ, verbose=False, device="cpu"
-        )[0]
+        last_result = run_yolo(yolo, frame)
         tools = (
             [last_result.names[int(c)] for c in last_result.boxes.cls]
             if last_result.boxes
@@ -99,7 +98,7 @@ while True:
 
             if stabil >= STABIL_MIN and user and now - last_event >= SAVE_EVERY:
                 borrowed = get_borrowed()
-                shown_event = last_result.plot()
+                shown_event = draw_detections(frame, last_result)
                 cv2.putText(
                     shown_event,
                     label,
@@ -124,7 +123,7 @@ while True:
             kandidat = None
             stabil = 0
 
-    shown = last_result.plot() if last_result is not None else frame
+    shown = draw_detections(frame, last_result)
     cv2.putText(shown, label, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
     cv2.imshow("Cam2 - Pinjam/Kembali", shown)
     if cv2.waitKey(1) & 0xFF == ord("q"):

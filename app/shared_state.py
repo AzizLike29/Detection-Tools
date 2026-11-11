@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import cv2
+
 ROOT = Path(r"D:\DATA C\Projek\Detection Object - Yolo8")
 STATE_PATH = ROOT / "app_state.json"
 
@@ -12,16 +14,69 @@ FACE_DIR = ROOT / "captures_face"
 CAPTURE_DIR = ROOT / "captures"
 THRESH = 0.40
 YOLO_CONF = 0.55
-IMGSZ = 416
+YOLO_IOU = 0.5
+# 480: ringan di CPU, lebih tajam dari 416; naikkan ke 640 jika ada GPU
+IMGSZ = 480
 STABIL_MIN = 2
 SAVE_EVERY = 3.0
 INVENTORY_EVERY = 8.0
 FACE_EVERY = 15
-YOLO_EVERY = 8
-INVENTORY_EVERY_FRAMES = 12
+YOLO_EVERY = 5
+INVENTORY_EVERY_FRAMES = 8
 
 FACE_DIR.mkdir(exist_ok=True)
 CAPTURE_DIR.mkdir(exist_ok=True)
+
+
+def _detect_device():
+    try:
+        import torch
+
+        return 0 if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
+DEVICE = _detect_device()
+
+
+def run_yolo(model, frame):
+    """Track + persist: box lebih stabil; dipanggil tiap YOLO_EVERY frame saja."""
+    return model.track(
+        frame,
+        conf=YOLO_CONF,
+        iou=YOLO_IOU,
+        imgsz=IMGSZ,
+        persist=True,
+        tracker="bytetrack.yaml",
+        verbose=False,
+        device=DEVICE,
+    )[0]
+
+
+def draw_detections(frame, result):
+    """Gambar box di frame live — lebih ringan daripada result.plot() tiap loop."""
+    if result is None or result.boxes is None or len(result.boxes) == 0:
+        return frame
+    shown = frame.copy()
+    names = result.names
+    for b in result.boxes:
+        x1, y1, x2, y2 = (int(v) for v in b.xyxy[0].tolist())
+        cls_id = int(b.cls[0])
+        conf = float(b.conf[0])
+        label = f"{names[cls_id]} {conf:.2f}"
+        cv2.rectangle(shown, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(
+            shown,
+            label,
+            (x1, max(20, y1 - 6)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 255, 0),
+            1,
+            cv2.LINE_AA,
+        )
+    return shown
 
 _cache_mtime = None
 _cache_data = None

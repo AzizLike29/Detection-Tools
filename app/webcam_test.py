@@ -1,3 +1,4 @@
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -10,17 +11,27 @@ from gtts import gTTS
 from insightface.app import FaceAnalysis
 from ultralytics import YOLO
 
-ROOT = Path(r"D:\DATA C\Projek\Detection Object - Yolo8")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from shared_state import (
+    DEVICE,
+    ROOT,
+    YOLO_EVERY,
+    draw_detections,
+    run_yolo,
+)
+
 SAVE = ROOT / "captures"
 THRESH = 0.40
 SAVE_EVERY = 3.0
 STABIL_MIN = 3
+FACE_EVERY = 10
 
 SAVE.mkdir(exist_ok=True)
 pygame.mixer.init()
 
 yolo = YOLO(str(ROOT / "best.pt"))
 app = FaceAnalysis(name="buffalo_s")
+# shortcut: ctx_id=0 asumsikan GPU; ganti -1 jika InsightFace error di CPU-only
 app.prepare(ctx_id=0, det_size=(320, 320))
 
 data = np.load(str(ROOT / "gallery_embeddings.npz"), allow_pickle=True)
@@ -76,14 +87,14 @@ def catat(nama, aksi, tool, jam, shown):
     print("Tersimpan", out)
 
 
-cap = cv2.VideoCapture(0)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 if not cap.isOpened():
     raise RuntimeError("Kamera tidak bisa dibuka")
 
-print("Webcam jalan. Q untuk berhenti")
+print(f"Webcam jalan (device={DEVICE}). Q untuk berhenti")
 
 n = 0
 alat = []
@@ -95,30 +106,24 @@ stabil = 0
 last_event = {}
 
 while True:
-    ok, frame = cap.read()
+    cap.grab()
+    ok, frame = cap.retrieve()
+    if not ok:
+        ok, frame = cap.read()
     if not ok:
         break
     n += 1
 
-    if n % 10 == 0:
+    if n % FACE_EVERY == 0:
         faces = app.get(frame)
 
-    shown = frame.copy()
-    if last_result is not None:
-        shown = last_result.plot()
-    if faces:
-        shown = app.draw_on(shown, faces)
-
-    if n % 3 == 0:
-        last_result = yolo.predict(frame, conf=0.40, imgsz=1280, iou=0.5, verbose=False)[0]
+    if n % YOLO_EVERY == 0:
+        last_result = run_yolo(yolo, frame)
         alat = (
             [last_result.names[int(c)] for c in last_result.boxes.cls]
             if last_result.boxes
             else []
         )
-        shown = last_result.plot()
-        if faces:
-            shown = app.draw_on(shown, faces)
 
         sekarang = set(alat)
         if alat_di_rak is None:
@@ -140,13 +145,16 @@ while True:
                         break
                 now = time.time()
                 jam = datetime.now().strftime("%H.%M")
+                shown_event = draw_detections(frame, last_result)
+                if faces:
+                    shown_event = app.draw_on(shown_event, faces)
                 if nama and (hilang or muncul):
                     if now - last_event.get(nama, 0) >= SAVE_EVERY:
                         last_event[nama] = now
                         for tool in sorted(hilang):
-                            catat(nama, "meminjam", tool, jam, shown)
+                            catat(nama, "meminjam", tool, jam, shown_event)
                         for tool in sorted(muncul):
-                            catat(nama, "mengembalikan", tool, jam, shown)
+                            catat(nama, "mengembalikan", tool, jam, shown_event)
                 alat_di_rak = sekarang
                 kandidat = None
                 stabil = 0
@@ -154,6 +162,10 @@ while True:
         else:
             kandidat = sekarang
             stabil = 1
+
+    shown = draw_detections(frame, last_result)
+    if faces:
+        shown = app.draw_on(shown, faces)
 
     cv2.imshow("Tools + Wajah", shown)
     if cv2.waitKey(1) & 0xFF == ord("q"):
