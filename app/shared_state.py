@@ -13,10 +13,9 @@ CAM3 = 1
 FACE_DIR = ROOT / "captures_face"
 CAPTURE_DIR = ROOT / "captures"
 THRESH = 0.40
-YOLO_CONF = 0.55
+YOLO_CONF = 0.45
 YOLO_IOU = 0.5
-# 480: ringan di CPU, lebih tajam dari 416; naikkan ke 640 jika ada GPU
-IMGSZ = 480
+IMGSZ = 640
 STABIL_MIN = 2
 SAVE_EVERY = 3.0
 INVENTORY_EVERY = 8.0
@@ -77,6 +76,7 @@ def draw_detections(frame, result):
             cv2.LINE_AA,
         )
     return shown
+
 
 _cache_mtime = None
 _cache_data = None
