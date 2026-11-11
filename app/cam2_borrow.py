@@ -8,6 +8,7 @@ from ultralytics import YOLO
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from shared_state import (
+    CAM1,
     CAM2,
     CAPTURE_DIR,
     IMGSZ,
@@ -15,6 +16,7 @@ from shared_state import (
     SAVE_EVERY,
     STABIL_MIN,
     YOLO_CONF,
+    YOLO_EVERY,
     add_borrowed,
     get_borrowed,
     get_user,
@@ -31,15 +33,18 @@ cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 if not cap.isOpened():
     raise RuntimeError(f"Kamera 2 (index {CAM2}) tidak bisa dibuka")
 
+if CAM1 == CAM2:
+    print("Peringatan: CAM1 dan CAM2 index sama. Jalankan satu kamera saja agar tidak patah.")
 print("Cam2 pinjam/kembali. Arahkan tools ke kamera. Q keluar")
 
 n = 0
 last_result = None
 kandidat = None
 stabil = 0
-last_empty = 0.0
 had_empty = True
 last_event = 0.0
+cached_user = None
+user_refresh = 0.0
 
 
 def catat(nama, aksi, tool, shown):
@@ -55,26 +60,25 @@ def catat(nama, aksi, tool, shown):
 
 
 while True:
-    ok, frame = cap.read()
+    cap.grab()
+    ok, frame = cap.retrieve()
+    if not ok:
+        ok, frame = cap.read()
     if not ok:
         break
     n += 1
 
-    shown = frame.copy()
-    if last_result is not None:
-        shown = last_result.plot()
-
-    user = get_user()
+    now = time.time()
+    if now - user_refresh > 0.5:
+        cached_user = get_user()
+        user_refresh = now
+    user = cached_user
     label = f"Sesi: {user}" if user else "Sesi: belum konfirmasi (Cam1)"
-    cv2.putText(shown, label, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
-    if n % 3 == 0:
-        last_result = yolo.predict(frame, conf=YOLO_CONF, imgsz=IMGSZ, verbose=False)[0]
-        shown = last_result.plot()
-        cv2.putText(
-            shown, label, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2
-        )
-
+    if n % YOLO_EVERY == 0:
+        last_result = yolo.predict(
+            frame, conf=YOLO_CONF, imgsz=IMGSZ, verbose=False, device="cpu"
+        )[0]
         tools = (
             [last_result.names[int(c)] for c in last_result.boxes.cls]
             if last_result.boxes
@@ -86,7 +90,6 @@ while True:
             had_empty = True
             kandidat = None
             stabil = 0
-            last_empty = time.time()
         elif had_empty:
             if sekarang == kandidat:
                 stabil += 1
@@ -94,16 +97,26 @@ while True:
                 kandidat = set(sekarang)
                 stabil = 1
 
-            if stabil >= STABIL_MIN and user and time.time() - last_event >= SAVE_EVERY:
+            if stabil >= STABIL_MIN and user and now - last_event >= SAVE_EVERY:
                 borrowed = get_borrowed()
+                shown_event = last_result.plot()
+                cv2.putText(
+                    shown_event,
+                    label,
+                    (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 255, 255),
+                    2,
+                )
                 for tool in sorted(sekarang):
                     if tool in borrowed:
                         remove_borrowed(tool)
-                        catat(user, "mengembalikan", tool, shown)
+                        catat(user, "mengembalikan", tool, shown_event)
                     else:
                         add_borrowed(tool)
-                        catat(user, "meminjam", tool, shown)
-                last_event = time.time()
+                        catat(user, "meminjam", tool, shown_event)
+                last_event = now
                 had_empty = False
                 kandidat = None
                 stabil = 0
@@ -111,6 +124,8 @@ while True:
             kandidat = None
             stabil = 0
 
+    shown = last_result.plot() if last_result is not None else frame
+    cv2.putText(shown, label, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
     cv2.imshow("Cam2 - Pinjam/Kembali", shown)
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break

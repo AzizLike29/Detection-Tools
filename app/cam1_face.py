@@ -8,11 +8,11 @@ import numpy as np
 from insightface.app import FaceAnalysis
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from shared_state import CAM1, FACE_DIR, ROOT, THRESH, set_user, clear_user
+from shared_state import CAM1, CAM2, FACE_DIR, FACE_EVERY, ROOT, THRESH, set_user, clear_user
 from tts_util import ucap
 
 app = FaceAnalysis(name="buffalo_s")
-app.prepare(ctx_id=0, det_size=(320, 320))
+app.prepare(ctx_id=-1, det_size=(256, 256))
 data = np.load(str(ROOT / "gallery_embeddings.npz"), allow_pickle=True)
 GALLERY_NAMES = data["names"]
 GALLERY_EMB = data["embeddings"]
@@ -34,6 +34,8 @@ cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 if not cap.isOpened():
     raise RuntimeError(f"Kamera 1 (index {CAM1}) tidak bisa dibuka")
 
+if CAM1 == CAM2:
+    print("Peringatan: CAM1 dan CAM2 index sama. Jalankan satu kamera saja agar tidak patah.")
 print("Cam1 muka. Y=konfirmasi  N=batal  C=clear sesi  Q=keluar")
 
 n = 0
@@ -43,17 +45,20 @@ asked = False
 last_ask = 0.0
 
 while True:
-    ok, frame = cap.read()
+    cap.grab()
+    ok, frame = cap.retrieve()
+    if not ok:
+        ok, frame = cap.read()
     if not ok:
         break
     n += 1
 
-    if n % 8 == 0:
+    if n % FACE_EVERY == 0:
         faces = app.get(frame)
 
-    shown = frame.copy()
+    shown = frame
     if faces:
-        shown = app.draw_on(shown, faces)
+        shown = app.draw_on(frame.copy(), faces)
 
     known = None
     for face in faces:

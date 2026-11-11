@@ -7,9 +7,11 @@ from ultralytics import YOLO
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from shared_state import (
+    CAM2,
     CAM3,
     IMGSZ,
     INVENTORY_EVERY,
+    INVENTORY_EVERY_FRAMES,
     ROOT,
     STABIL_MIN,
     YOLO_CONF,
@@ -26,6 +28,8 @@ cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 if not cap.isOpened():
     raise RuntimeError(f"Kamera 3 (index {CAM3}) tidak bisa dibuka")
 
+if CAM3 == CAM2:
+    print("Peringatan: CAM3 dan CAM2 index sama. Jalankan satu kamera saja agar tidak patah.")
 print("Cam3 inventori. Baseline diambil otomatis. Q keluar")
 
 n = 0
@@ -37,18 +41,18 @@ last_check = 0.0
 alerted = set()
 
 while True:
-    ok, frame = cap.read()
+    cap.grab()
+    ok, frame = cap.retrieve()
+    if not ok:
+        ok, frame = cap.read()
     if not ok:
         break
     n += 1
 
-    shown = frame.copy()
-    if last_result is not None:
-        shown = last_result.plot()
-
-    if n % 5 == 0:
-        last_result = yolo.predict(frame, conf=YOLO_CONF, imgsz=IMGSZ, verbose=False)[0]
-        shown = last_result.plot()
+    if n % INVENTORY_EVERY_FRAMES == 0:
+        last_result = yolo.predict(
+            frame, conf=YOLO_CONF, imgsz=IMGSZ, verbose=False, device="cpu"
+        )[0]
         tools = (
             [last_result.names[int(c)] for c in last_result.boxes.cls]
             if last_result.boxes
@@ -86,6 +90,7 @@ while True:
                 alerted.discard(tool)
                 print("Kembali terdeteksi:", tool)
 
+    shown = last_result.plot() if last_result is not None else frame
     status = f"Baseline: {len(baseline) if baseline else 0} | Alert: {len(alerted)}"
     cv2.putText(
         shown, status, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2
