@@ -1,8 +1,8 @@
 
-Workshop-Tools - v7 2026-11-10 9:50am
+Workshop-Tools - v8 2026-11-13 10:03am
 ==============================
 
-This dataset was exported via roboflow.com on November 10, 2026 at 2:51 AM GMT
+This dataset was exported via roboflow.com on November 13, 2026 at 3:04 AM GMT
 
 Roboflow is an end-to-end computer vision platform that helps you
 * collaborate with your team on computer vision projects
@@ -17,12 +17,12 @@ visit https://github.com/roboflow/notebooks
 
 To find over 100k other datasets and pre-trained models, visit https://universe.roboflow.com
 
-The dataset includes 795 images.
+The dataset includes 958 images.
 Workshop-Tools are annotated in YOLOv8 format.
 
 The following pre-processing was applied to each image:
 * Auto-orientation of pixel data (with EXIF-orientation stripping)
-* Resize to 640x640 (Fit (black edges))
+* Resize to 640x640 (Fit within)
 
 No image augmentation techniques were applied.
 
