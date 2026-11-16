@@ -30,7 +30,9 @@ if not cap.isOpened():
     raise RuntimeError(f"Kamera 3 (index {CAM3}) tidak bisa dibuka")
 
 if CAM3 == CAM2:
-    print("Peringatan: CAM3 dan CAM2 index sama. Jalankan satu kamera saja agar tidak patah.")
+    print(
+        "Peringatan: CAM3 dan CAM2 index sama. Jalankan satu kamera saja agar tidak patah"
+    )
 print(f"Cam3 inventori (device={DEVICE}). Baseline diambil otomatis. Q keluar")
 
 n = 0

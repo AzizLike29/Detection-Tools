@@ -40,7 +40,7 @@ DEVICE = _detect_device()
 
 
 def run_yolo(model, frame):
-    """Track + persist: box lebih stabil; dipanggil tiap YOLO_EVERY frame saja."""
+    """Track + persist: box lebih stabil dipanggil tiap YOLO_EVERY frame."""
     return model.track(
         frame,
         conf=YOLO_CONF,
@@ -54,7 +54,7 @@ def run_yolo(model, frame):
 
 
 def draw_detections(frame, result):
-    """Gambar box di frame live — lebih ringan daripada result.plot() tiap loop."""
+    """Gambar box di frame live - lebih ringan daripada result.plot() tiap loop."""
     if result is None or result.boxes is None or len(result.boxes) == 0:
         return frame
     shown = frame.copy()
