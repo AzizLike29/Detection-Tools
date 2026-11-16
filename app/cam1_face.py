@@ -8,7 +8,19 @@ import numpy as np
 from insightface.app import FaceAnalysis
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from shared_state import CAM1, CAM2, FACE_DIR, FACE_EVERY, ROOT, THRESH, set_user, clear_user
+from shared_state import (
+    CAM1,
+    CAM2,
+    FACE_DIR,
+    FACE_EVERY,
+    ROOT,
+    SAVE_EVERY,
+    STABIL_MIN,
+    THRESH,
+    clear_user,
+    get_user,
+    set_user,
+)
 from tts_util import ucap
 
 app = FaceAnalysis(name="buffalo_s")
@@ -35,14 +47,17 @@ if not cap.isOpened():
     raise RuntimeError(f"Kamera 1 (index {CAM1}) tidak bisa dibuka")
 
 if CAM1 == CAM2:
-    print("Peringatan: CAM1 dan CAM2 index sama. Jalankan satu kamera saja agar tidak patah.")
-print("Cam1 muka. Y=konfirmasi  N=batal  C=clear sesi  Q=keluar")
+    print(
+        "Peringatan: CAM1 dan CAM2 index sama. Jalankan satu kamera saja agar tidak patah."
+    )
+print("Cam1 muka auto. C=clear sesi  Q=keluar")
 
 n = 0
 faces = []
-pending = None
-asked = False
-last_ask = 0.0
+kandidat = None
+stabil = 0
+had_empty = True
+last_event = 0.0
 
 while True:
     cap.grab()
@@ -76,22 +91,42 @@ while True:
             )
             break
 
-    if known:
-        if pending != known:
-            pending = known
-            asked = False
-        if not asked and time.time() - last_ask > 4.0:
-            ucap(f"Apakah benar ini muka {known}?")
-            asked = True
-            last_ask = time.time()
-            print("Menunggu konfirmasi Y/N untuk", known)
-    else:
-        pending = None
-        asked = False
+    now = time.time()
+    if not known:
+        had_empty = True
+        kandidat = None
+        stabil = 0
+    elif had_empty:
+        if known == kandidat:
+            stabil += 1
+        else:
+            kandidat = known
+            stabil = 1
 
+        if stabil >= STABIL_MIN and now - last_event >= SAVE_EVERY:
+            # skip foto ulang kalau wajah masih masuk frame, tunggu keluar dari frame dan jeda berapa detik
+            if get_user() != known:
+                set_user(known)
+                out = (
+                    FACE_DIR / f"{known}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                )
+                cv2.imwrite(str(out), shown)
+                ucap(f"Baik {known}, silakan arahkan alat ke kamera dua")
+                print("Sesi aktif:", known, "tersimpan", out)
+            last_event = now
+            had_empty = False
+            kandidat = None
+            stabil = 0
+    else:
+        kandidat = None
+        stabil = 0
+
+    sesi = get_user()
+    label = f"Sesi: {sesi}" if sesi else "Sesi: menunggu wajah"
+    cv2.putText(shown, label, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
     cv2.putText(
         shown,
-        "Y konfirmasi | N batal | C clear | Q keluar",
+        "Auto simpan | C clear | Q keluar",
         (20, shown.shape[0] - 20),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.55,
@@ -105,23 +140,11 @@ while True:
         break
     if key == ord("c"):
         clear_user()
-        pending = None
-        asked = False
+        had_empty = True
+        kandidat = None
+        stabil = 0
         ucap("Sesi dikosongkan")
         print("Sesi dikosongkan")
-    if key == ord("y") and pending:
-        set_user(pending)
-        out = FACE_DIR / f"{pending}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-        cv2.imwrite(str(out), shown)
-        ucap(f"Baik {pending}, silakan arahkan alat ke kamera dua")
-        print("Sesi aktif:", pending, "tersimpan", out)
-        asked = False
-        pending = None
-    if key == ord("n") and pending:
-        ucap("Baik, silakan scan ulang")
-        print("Ditolak:", pending)
-        pending = None
-        asked = False
 
 cap.release()
 cv2.destroyAllWindows()
