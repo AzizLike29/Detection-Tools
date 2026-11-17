@@ -13,6 +13,15 @@ speaking = False
 _pygame_ready = False
 
 
+def _cleanup_stale_tts():
+    """Hapus sisa file TTS lama di root proyek"""
+    for stale_path in ROOT.glob("_tts*.mp3"):
+        try:
+            stale_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def _ensure_mixer():
     """Inisialisasi pygame mixer sekali saja"""
     global _pygame_ready
@@ -45,6 +54,13 @@ def ucap(text):
             print(f"TTS error {error}")
         finally:
             speaking = False
-            audio_path.unlink(missing_ok=True)
+            try:
+                audio_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     Thread(target=speak_worker, daemon=True).start()
+
+
+# Bersihkan sisa TTS saat modul dimuat
+_cleanup_stale_tts()
