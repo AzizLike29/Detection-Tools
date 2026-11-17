@@ -1,5 +1,6 @@
 import sys
 import time
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -14,120 +15,168 @@ from shared_state import (
     DEVICE,
     ROOT,
     SAVE_EVERY,
+    STOCK_QTY,
     STABIL_MIN,
     YOLO_EVERY,
     add_borrowed,
     draw_detections,
     get_borrowed,
+    get_borrowed_qty,
     get_user,
     remove_borrowed,
     run_yolo,
 )
 from tts_util import ucap
 
-yolo = YOLO(str(ROOT / "best.pt"))
+yolo_model = YOLO(str(ROOT / "best.pt"))
 
-cap = cv2.VideoCapture(CAM2, cv2.CAP_DSHOW)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-if not cap.isOpened():
+camera = cv2.VideoCapture(CAM2, cv2.CAP_DSHOW)
+camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+if not camera.isOpened():
     raise RuntimeError(f"Kamera 2 (index {CAM2}) tidak bisa dibuka")
 
 if CAM1 == CAM2:
-    print("Peringatan: CAM1 dan CAM2 index sama. Jalankan satu kamera saja agar tidak patah.")
-print(f"Cam2 pinjam/kembali (device={DEVICE}). Arahkan tools ke kamera. Q keluar")
+    print(
+        "Peringatan CAM1 dan CAM2 memakai index yang sama. Jalankan satu kamera saja agar tidak konflik."
+    )
+print(
+    f"Cam2 pinjam/kembali (device={DEVICE}). Arahkan tools ke kamera. Tekan Q untuk keluar."
+)
 
-n = 0
+frame_count = 0
 last_result = None
-kandidat = None
-stabil = 0
-had_empty = True
-last_event = 0.0
+candidate_counts = None
+stable_count = 0
+was_empty = True
+last_event_time = 0.0
 cached_user = None
-user_refresh = 0.0
+user_refresh_time = 0.0
 
 
-def catat(nama, aksi, tool, shown):
-    nama_alat = tool.replace("_", " ")
-    jam = datetime.now().strftime("%H.%M")
-    ucap(f"{nama} {aksi} alat {nama_alat}")
-    print(f"{nama} {aksi} alat {nama_alat} jam {jam}")
-    folder = CAPTURE_DIR / nama_alat
+def record_event(person_name, action, tool, display_frame, qty=1):
+    """Simpan foto dan umumkan event pinjam atau kembali"""
+    tool_label = tool.replace("_", " ")
+    time_text = datetime.now().strftime("%H.%M")
+    qty_text = f" ({qty})" if qty > 1 else ""
+    ucap(f"{person_name} {action} alat {tool_label}{qty_text}")
+    print(f"{person_name} {action} alat {tool_label}{qty_text} jam {time_text}")
+    folder = CAPTURE_DIR / tool_label
     folder.mkdir(exist_ok=True)
-    out = folder / f"{nama}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-    cv2.imwrite(str(out), shown)
-    print("Tersimpan", out)
+    capture_path = folder / f"{person_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+    cv2.imwrite(str(capture_path), display_frame)
+    print(f"Tersimpan {capture_path}")
 
 
 while True:
-    cap.grab()
-    ok, frame = cap.retrieve()
-    if not ok:
-        ok, frame = cap.read()
-    if not ok:
+    camera.grab()
+    frame_ok, frame = camera.retrieve()
+    if not frame_ok:
+        frame_ok, frame = camera.read()
+    if not frame_ok:
         break
-    n += 1
+    frame_count += 1
 
-    now = time.time()
-    if now - user_refresh > 0.5:
+    current_time = time.time()
+    if current_time - user_refresh_time > 0.5:
         cached_user = get_user()
-        user_refresh = now
-    user = cached_user
-    label = f"Sesi: {user}" if user else "Sesi: belum konfirmasi (Cam1)"
+        user_refresh_time = current_time
+    session_user = cached_user
+    session_label = (
+        f"Sesi {session_user}" if session_user else "Sesi belum konfirmasi (Cam1)"
+    )
 
-    if n % YOLO_EVERY == 0:
-        last_result = run_yolo(yolo, frame)
+    if frame_count % YOLO_EVERY == 0:
+        last_result = run_yolo(yolo_model, frame)
         tools = (
             [last_result.names[int(c)] for c in last_result.boxes.cls]
             if last_result.boxes
             else []
         )
-        sekarang = set(tools)
+        detected_counts = dict(Counter(tools))
 
-        if not sekarang:
-            had_empty = True
-            kandidat = None
-            stabil = 0
-        elif had_empty:
-            if sekarang == kandidat:
-                stabil += 1
+        if not detected_counts:
+            was_empty = True
+            candidate_counts = None
+            stable_count = 0
+        elif was_empty:
+            if detected_counts == candidate_counts:
+                stable_count += 1
             else:
-                kandidat = set(sekarang)
-                stabil = 1
+                candidate_counts = dict(detected_counts)
+                stable_count = 1
 
-            if stabil >= STABIL_MIN and user and now - last_event >= SAVE_EVERY:
-                borrowed = get_borrowed()
-                shown_event = draw_detections(frame, last_result)
+            if (
+                stable_count >= STABIL_MIN
+                and session_user
+                and current_time - last_event_time >= SAVE_EVERY
+            ):
+                event_frame = draw_detections(frame, last_result)
                 cv2.putText(
-                    shown_event,
-                    label,
+                    event_frame,
+                    session_label,
                     (20, 40),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7,
                     (0, 255, 255),
                     2,
                 )
-                for tool in sorted(sekarang):
-                    if tool in borrowed:
-                        remove_borrowed(tool)
-                        catat(user, "mengembalikan", tool, shown_event)
+                for tool, count in sorted(detected_counts.items()):
+                    if tool in STOCK_QTY:
+                        # Tools stok qty ikut jumlah box
+                        if get_borrowed_qty(tool) > 0:
+                            returned_count = remove_borrowed(tool, count)
+                            if returned_count:
+                                record_event(
+                                    session_user,
+                                    "mengembalikan",
+                                    tool,
+                                    event_frame,
+                                    returned_count,
+                                )
+                        else:
+                            borrowed_count = add_borrowed(tool, count)
+                            if borrowed_count:
+                                record_event(
+                                    session_user,
+                                    "meminjam",
+                                    tool,
+                                    event_frame,
+                                    borrowed_count,
+                                )
                     else:
-                        add_borrowed(tool)
-                        catat(user, "meminjam", tool, shown_event)
-                last_event = now
-                had_empty = False
-                kandidat = None
-                stabil = 0
+                        # Tools lain tetap toggle pinjam/kembali
+                        borrowed = get_borrowed()
+                        if tool in borrowed:
+                            remove_borrowed(tool)
+                            record_event(
+                                session_user, "mengembalikan", tool, event_frame
+                            )
+                        else:
+                            add_borrowed(tool)
+                            record_event(session_user, "meminjam", tool, event_frame)
+                last_event_time = current_time
+                was_empty = False
+                candidate_counts = None
+                stable_count = 0
         else:
-            kandidat = None
-            stabil = 0
+            candidate_counts = None
+            stable_count = 0
 
-    shown = draw_detections(frame, last_result)
-    cv2.putText(shown, label, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-    cv2.imshow("Cam2 - Pinjam/Kembali", shown)
+    display_frame = draw_detections(frame, last_result)
+    cv2.putText(
+        display_frame,
+        session_label,
+        (20, 40),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (0, 255, 255),
+        2,
+    )
+    cv2.imshow("Cam2 - Pinjam/Kembali", display_frame)
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 
-cap.release()
+camera.release()
 cv2.destroyAllWindows()
