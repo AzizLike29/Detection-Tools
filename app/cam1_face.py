@@ -23,66 +23,67 @@ from shared_state import (
 )
 from tts_util import ucap
 
-app = FaceAnalysis(name="buffalo_s")
-app.prepare(ctx_id=-1, det_size=(256, 256))
-data = np.load(str(ROOT / "gallery_embeddings.npz"), allow_pickle=True)
-GALLERY_NAMES = data["names"]
-GALLERY_EMB = data["embeddings"]
+face_analyzer = FaceAnalysis(name="buffalo_s")
+face_analyzer.prepare(ctx_id=-1, det_size=(256, 256))
+gallery_data = np.load(str(ROOT / "gallery_embeddings.npz"), allow_pickle=True)
+GALLERY_NAMES = gallery_data["names"]
+GALLERY_EMBEDDINGS = gallery_data["embeddings"]
 
 
-def identify(face):
-    sim = GALLERY_EMB @ face.normed_embedding
-    i = int(np.argmax(sim))
-    score = float(sim[i])
-    if score < THRESH:
-        return "unknown", score
-    return str(GALLERY_NAMES[i]), score
+def identify_face(face):
+    """Cocokkan satu wajah ke gallery lalu kembalikan nama dan skor"""
+    similarities = GALLERY_EMBEDDINGS @ face.normed_embedding
+    best_index = int(np.argmax(similarities))
+    match_score = float(similarities[best_index])
+    if match_score < THRESH:
+        return "unknown", match_score
+    return str(GALLERY_NAMES[best_index]), match_score
 
 
-cap = cv2.VideoCapture(CAM1, cv2.CAP_DSHOW)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-if not cap.isOpened():
+camera = cv2.VideoCapture(CAM1, cv2.CAP_DSHOW)
+camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+if not camera.isOpened():
     raise RuntimeError(f"Kamera 1 (index {CAM1}) tidak bisa dibuka")
 
 if CAM1 == CAM2:
     print(
-        "Peringatan: CAM1 dan CAM2 index sama. Jalankan satu kamera saja agar tidak patah."
+        "Peringatan CAM1 dan CAM2 memakai index yang sama. Jalankan satu kamera saja agar tidak konflik."
     )
-print("Cam1 muka auto. C=clear sesi  Q=keluar")
+print("Cam1 muka otomatis. Tekan C untuk clear sesi. Tekan Q untuk keluar.")
 
-n = 0
+frame_count = 0
 faces = []
-kandidat = None
-stabil = 0
-had_empty = True
-last_event = 0.0
+candidate_name = None
+stable_count = 0
+was_empty = True
+last_event_time = 0.0
 
 while True:
-    cap.grab()
-    ok, frame = cap.retrieve()
-    if not ok:
-        ok, frame = cap.read()
-    if not ok:
+    camera.grab()
+    frame_ok, frame = camera.retrieve()
+    if not frame_ok:
+        frame_ok, frame = camera.read()
+    if not frame_ok:
         break
-    n += 1
+    frame_count += 1
 
-    if n % FACE_EVERY == 0:
-        faces = app.get(frame)
+    if frame_count % FACE_EVERY == 0:
+        faces = face_analyzer.get(frame)
 
-    shown = frame
+    display_frame = frame
     if faces:
-        shown = app.draw_on(frame.copy(), faces)
+        display_frame = face_analyzer.draw_on(frame.copy(), faces)
 
-    known = None
+    recognized_name = None
     for face in faces:
-        nama, skor = identify(face)
-        if nama != "unknown":
-            known = nama
+        person_name, match_score = identify_face(face)
+        if person_name != "unknown":
+            recognized_name = person_name
             cv2.putText(
-                shown,
-                f"{nama} {skor:.2f}",
+                display_frame,
+                f"{person_name} {match_score:.2f}",
                 (20, 40),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 1.0,
@@ -91,60 +92,69 @@ while True:
             )
             break
 
-    now = time.time()
-    if not known:
-        had_empty = True
-        kandidat = None
-        stabil = 0
-    elif had_empty:
-        if known == kandidat:
-            stabil += 1
+    current_time = time.time()
+    if not recognized_name:
+        was_empty = True
+        candidate_name = None
+        stable_count = 0
+    elif was_empty:
+        if recognized_name == candidate_name:
+            stable_count += 1
         else:
-            kandidat = known
-            stabil = 1
+            candidate_name = recognized_name
+            stable_count = 1
 
-        if stabil >= STABIL_MIN and now - last_event >= SAVE_EVERY:
-            # skip foto ulang kalau wajah masih masuk frame, tunggu keluar dari frame dan jeda berapa detik
-            if get_user() != known:
-                set_user(known)
-                out = (
-                    FACE_DIR / f"{known}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        if stable_count >= STABIL_MIN and current_time - last_event_time >= SAVE_EVERY:
+            # Tunggu wajah keluar dari frame sebelum simpan lagi
+            if get_user() != recognized_name:
+                set_user(recognized_name)
+                capture_path = (
+                    FACE_DIR
+                    / f"{recognized_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
                 )
-                cv2.imwrite(str(out), shown)
-                ucap(f"Baik {known}, silakan arahkan alat ke kamera dua")
-                print("Sesi aktif:", known, "tersimpan", out)
-            last_event = now
-            had_empty = False
-            kandidat = None
-            stabil = 0
+                cv2.imwrite(str(capture_path), display_frame)
+                ucap(f"Baik {recognized_name}, silakan arahkan alat ke kamera dua")
+                print(f"Sesi aktif {recognized_name} tersimpan {capture_path}")
+            last_event_time = current_time
+            was_empty = False
+            candidate_name = None
+            stable_count = 0
     else:
-        kandidat = None
-        stabil = 0
+        candidate_name = None
+        stable_count = 0
 
-    sesi = get_user()
-    label = f"Sesi: {sesi}" if sesi else "Sesi: menunggu wajah"
-    cv2.putText(shown, label, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+    session_user = get_user()
+    session_label = f"Sesi: {session_user}" if session_user else "Sesi: menunggu wajah"
     cv2.putText(
-        shown,
-        "Auto simpan | C clear | Q keluar",
-        (20, shown.shape[0] - 20),
+        display_frame,
+        session_label,
+        (20, 80),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (0, 255, 255),
+        2,
+    )
+    cv2.putText(
+        display_frame,
+        "Auto simpan || C clear || Q keluar",
+        (20, display_frame.shape[0] - 20),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.55,
         (255, 255, 255),
         1,
     )
-    cv2.imshow("Cam1 - Muka", shown)
+    cv2.imshow("Cam1 - Muka", display_frame)
     key = cv2.waitKey(1) & 0xFF
 
     if key == ord("q"):
         break
     if key == ord("c"):
         clear_user()
-        had_empty = True
-        kandidat = None
-        stabil = 0
+        was_empty = True
+        candidate_name = None
+        stable_count = 0
         ucap("Sesi dikosongkan")
         print("Sesi dikosongkan")
 
-cap.release()
+camera.release()
 cv2.destroyAllWindows()
