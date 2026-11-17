@@ -20,85 +20,96 @@ from shared_state import (
 )
 from tts_util import ucap
 
-yolo = YOLO(str(ROOT / "best.pt"))
+yolo_model = YOLO(str(ROOT / "best.pt"))
 
-cap = cv2.VideoCapture(CAM3, cv2.CAP_DSHOW)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-if not cap.isOpened():
+camera = cv2.VideoCapture(CAM3, cv2.CAP_DSHOW)
+camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+if not camera.isOpened():
     raise RuntimeError(f"Kamera 3 (index {CAM3}) tidak bisa dibuka")
 
 if CAM3 == CAM2:
     print(
-        "Peringatan: CAM3 dan CAM2 index sama. Jalankan satu kamera saja agar tidak patah"
+        "Peringatan CAM3 dan CAM2 memakai index yang sama. Jalankan satu kamera saja agar tidak konflik."
     )
-print(f"Cam3 inventori (device={DEVICE}). Baseline diambil otomatis. Q keluar")
+print(
+    f"Cam3 inventori (device={DEVICE}). Baseline diambil otomatis. Tekan Q untuk keluar."
+)
 
-n = 0
+frame_count = 0
 last_result = None
 baseline = None
-kandidat = None
-stabil = 0
-last_check = 0.0
+candidate_tools = None
+stable_count = 0
+last_check_time = 0.0
 alerted = set()
 
 while True:
-    cap.grab()
-    ok, frame = cap.retrieve()
-    if not ok:
-        ok, frame = cap.read()
-    if not ok:
+    camera.grab()
+    frame_ok, frame = camera.retrieve()
+    if not frame_ok:
+        frame_ok, frame = camera.read()
+    if not frame_ok:
         break
-    n += 1
+    frame_count += 1
 
-    if n % INVENTORY_EVERY_FRAMES == 0:
-        last_result = run_yolo(yolo, frame)
+    if frame_count % INVENTORY_EVERY_FRAMES == 0:
+        last_result = run_yolo(yolo_model, frame)
         tools = (
             [last_result.names[int(c)] for c in last_result.boxes.cls]
             if last_result.boxes
             else []
         )
-        sekarang = set(tools)
+        detected_tools = set(tools)
 
         if baseline is None:
-            if sekarang == kandidat:
-                stabil += 1
+            # Ambil baseline setelah deteksi stabil
+            if detected_tools == candidate_tools:
+                stable_count += 1
             else:
-                kandidat = set(sekarang)
-                stabil = 1
-            if stabil >= STABIL_MIN:
-                baseline = set(sekarang)
-                kandidat = None
-                stabil = 0
-                print("Baseline inventori:", sorted(baseline))
+                candidate_tools = set(detected_tools)
+                stable_count = 1
+            if stable_count >= STABIL_MIN:
+                baseline = set(detected_tools)
+                candidate_tools = None
+                stable_count = 0
+                print(f"Baseline inventori {sorted(baseline)}")
                 ucap("Baseline inventori siap")
-        elif time.time() - last_check >= INVENTORY_EVERY:
-            last_check = time.time()
+        elif time.time() - last_check_time >= INVENTORY_EVERY:
+            last_check_time = time.time()
             borrowed = get_borrowed()
-            hilang = baseline - sekarang
-            for tool in sorted(hilang):
+            missing_tools = baseline - detected_tools
+            for tool in sorted(missing_tools):
                 if tool in borrowed:
                     continue
                 if tool in alerted:
                     continue
-                nama_alat = tool.replace("_", " ")
-                ucap(f"Peringatan, alat {nama_alat} tidak ada di ruangan")
-                print("HILANG:", tool)
+                tool_label = tool.replace("_", " ")
+                ucap(f"Peringatan, alat {tool_label} tidak ada di ruangan")
+                print(f"Hilang {tool}")
                 alerted.add(tool)
-            kembali = alerted & sekarang
-            for tool in sorted(kembali):
+            returned_tools = alerted & detected_tools
+            for tool in sorted(returned_tools):
                 alerted.discard(tool)
-                print("Kembali terdeteksi:", tool)
+                print(f"Kembali terdeteksi {tool}")
 
-    shown = draw_detections(frame, last_result)
-    status = f"Baseline: {len(baseline) if baseline else 0} | Alert: {len(alerted)}"
-    cv2.putText(
-        shown, status, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2
+    display_frame = draw_detections(frame, last_result)
+    status_label = (
+        f"Baseline {len(baseline) if baseline else 0} | Alert {len(alerted)}"
     )
-    cv2.imshow("Cam3 - Inventori", shown)
+    cv2.putText(
+        display_frame,
+        status_label,
+        (20, 40),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (0, 200, 255),
+        2,
+    )
+    cv2.imshow("Cam3 - Inventori", display_frame)
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 
-cap.release()
+camera.release()
 cv2.destroyAllWindows()
