@@ -136,7 +136,7 @@ while True:
     )
     cv2.putText(
         display_frame,
-        "Auto simpan || C clear || Q keluar",
+        "Auto simpan | C clear | Q keluar",
         (20, display_frame.shape[0] - 20),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.55,
