@@ -1,10 +1,19 @@
-import json
 from pathlib import Path
 
 import cv2
+import pymysql
 
 ROOT = Path(r"D:\DATA C\Projek\Detection Object - Yolo8")
-STATE_PATH = ROOT / "app_state.json"
+
+# Koneksi MySQL XAMPP
+DB_CONFIG = {
+    "host": "localhost",
+    "user": "root",
+    "password": "",
+    "database": "SFSmartMaintenanceDB",
+    "charset": "utf8mb4",
+    "autocommit": True,
+}
 
 CAM1 = 1
 CAM2 = 1
@@ -23,23 +32,220 @@ FACE_EVERY = 15
 YOLO_EVERY = 5
 INVENTORY_EVERY_FRAMES = 8
 
-# Stok awal tools yang dihitung jumlahnya
-STOCK_QTY = {
-    "penggaris_siku": 5,
-    "tang_rivet": 3,
-    "tang_kombinasi": 5,
-    "tang_potong": 5,
-    "klem_plat": 2,
-    "meteran": 4,
-    "penggaris_100cm": 3,
-    "penggaris_30cm": 3,
-    "kunci_t": 4,
-    "bor_tangan": 3,
-    "gerinda": 4,
-}
-
 FACE_DIR.mkdir(exist_ok=True)
 CAPTURE_DIR.mkdir(exist_ok=True)
+
+
+def get_conn():
+    return pymysql.connect(**DB_CONFIG)
+
+
+def _get_open_header_id(cur):
+    """Ambil ID sesi pinjam yang sedang open"""
+    cur.execute(
+        "SELECT intIdBorrowHeader FROM trBorrowHeader "
+        "WHERE txtStatus = 'open' ORDER BY intIdBorrowHeader DESC LIMIT 1"
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _get_tool(cur, yolo_class):
+    """Ambil ID, stok, dan mode qty dari tool berdasarkan class YOLO"""
+    cur.execute(
+        "SELECT intIdTools, intStockQty, bitTrackQty FROM mTools "
+        "WHERE txtYoloClass = %s AND bitIsActive = 1",
+        (yolo_class,),
+    )
+    return cur.fetchone()
+
+
+def _get_active_detail(cur, tool_id):
+    """Ambil baris pinjaman yang masih borrowed untuk satu tool"""
+    cur.execute(
+        "SELECT intIdBorrowDetail, intQty FROM trBorrowDetail "
+        "WHERE intIdTools = %s AND txtStatus = 'borrowed'",
+        (tool_id,),
+    )
+    return cur.fetchone()
+
+
+def log_event(
+    camera_name,
+    action,
+    user_name=None,
+    yolo_class=None,
+    qty=1,
+    confidence=None,
+    img_path=None,
+):
+    """Catat satu kejadian ke trEventLog. User dan tool dicari lewat nama/class"""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO trEventLog
+            (intIdUser, intIdTools, txtCamera, txtAction, intQty, fltConfidence, txtImgPath, dtEvent, txtInsertedBy, dtInserted)
+            VALUES (
+            (SELECT intIdUser FROM mUsers WHERE txtName=%s),
+            (SELECT intIdTools FROM mTools WHERE txtYoloClass=%s),
+            %s, %s, %s, %s, %s, NOW(), %s, NOW())
+            """,
+            (user_name, yolo_class, camera_name, action, qty, confidence, img_path, camera_name),
+        )
+
+
+def is_qty_tool(tool):
+    """Cek apakah tool dihitung qty (bitTrackQty = 1) atau toggle"""
+    with get_conn() as conn, conn.cursor() as cur:
+        tool_row = _get_tool(cur, tool)
+    return bool(tool_row and tool_row[2])
+
+
+def set_user(person_name):
+    """Mulai sesi baru untuk user yang dikenali Cam1"""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT intIdUser FROM mUsers WHERE txtName = %s AND bitIsActive = 1",
+            (person_name,),
+        )
+        user_row = cur.fetchone()
+        if user_row is None:
+            return
+        cur.execute(
+            "UPDATE trBorrowHeader SET txtStatus = 'closed', dtReturnDate = NOW(), "
+            "dtUpdated = NOW() WHERE txtStatus = 'open'"
+        )
+        cur.execute(
+            "INSERT INTO trBorrowHeader "
+            "(intIdUser, dtBorrowDate, txtStatus, txtInsertedBy, dtInserted) "
+            "VALUES (%s, NOW(), 'open', 'cam1', NOW())",
+            (user_row[0],),
+        )
+    log_event("cam1", "login", user_name=person_name)
+
+
+def clear_user():
+    """Tutup sesi user yang sedang aktif"""
+    person_name = get_user()
+    if person_name is None:
+        return
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE trBorrowHeader SET txtStatus = 'closed', dtReturnDate = NOW(), "
+            "dtUpdated = NOW() WHERE txtStatus = 'open'"
+        )
+    log_event("cam1", "logout", user_name=person_name)
+
+
+def get_user():
+    """Ambil nama user dari sesi yang sedang open"""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT u.txtName FROM trBorrowHeader h "
+            "JOIN mUsers u ON u.intIdUser = h.intIdUser "
+            "WHERE h.txtStatus = 'open' ORDER BY h.intIdBorrowHeader DESC LIMIT 1"
+        )
+        row = cur.fetchone()
+    return row[0] if row else None
+
+
+def get_borrowed():
+    """Ambil set class YOLO yang sedang dipinjam"""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT t.txtYoloClass FROM trBorrowDetail d "
+            "JOIN mTools t ON t.intIdTools = d.intIdTools "
+            "WHERE d.txtStatus = 'borrowed'"
+        )
+        return {row[0] for row in cur.fetchall()}
+
+
+def get_borrowed_qty(tool):
+    """Ambil jumlah unit tool yang sedang dipinjam"""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT COALESCE(SUM(d.intQty), 0) FROM trBorrowDetail d "
+            "JOIN mTools t ON t.intIdTools = d.intIdTools "
+            "WHERE t.txtYoloClass = %s AND d.txtStatus = 'borrowed'",
+            (tool,),
+        )
+        return int(cur.fetchone()[0])
+
+
+def get_sisa(tool):
+    """Hitung sisa stok tool dari intStockQty dikurangi yang dipinjam"""
+    with get_conn() as conn, conn.cursor() as cur:
+        tool_row = _get_tool(cur, tool)
+    if tool_row is None or not tool_row[2]:
+        return None
+    return tool_row[1] - get_borrowed_qty(tool)
+
+
+def add_borrowed(tool, qty=1):
+    """Catat pinjam tool. Tool qty memakai jumlah box, tool toggle hanya 1 unit"""
+    qty = max(1, int(qty))
+    with get_conn() as conn, conn.cursor() as cur:
+        header_id = _get_open_header_id(cur)
+        tool_row = _get_tool(cur, tool)
+        if header_id is None or tool_row is None:
+            return 0
+        tool_id, stock_qty, track_qty = tool_row
+        active_detail = _get_active_detail(cur, tool_id)
+
+        if track_qty:
+            borrowed_now = active_detail[1] if active_detail else 0
+            count = min(qty, stock_qty - borrowed_now)
+        else:
+            if active_detail:
+                return 0
+            count = 1
+        if count <= 0:
+            return 0
+
+        if active_detail:
+            cur.execute(
+                "UPDATE trBorrowDetail SET intQty = intQty + %s, dtUpdated = NOW() "
+                "WHERE intIdBorrowDetail = %s",
+                (count, active_detail[0]),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO trBorrowDetail "
+                "(intIdBorrowHeader, intIdTools, intQty, dtBorrowDate, txtStatus, txtInsertedBy, dtInserted) "
+                "VALUES (%s, %s, %s, NOW(), 'borrowed', 'cam2', NOW())",
+                (header_id, tool_id, count),
+            )
+    return count
+
+
+def remove_borrowed(tool, qty=1):
+    """Catat pengembalian tool. Sisa qty tetap borrowed, habis berarti returned"""
+    qty = max(1, int(qty))
+    with get_conn() as conn, conn.cursor() as cur:
+        tool_row = _get_tool(cur, tool)
+        if tool_row is None:
+            return 0
+        tool_id = tool_row[0]
+        active_detail = _get_active_detail(cur, tool_id)
+        if active_detail is None:
+            return 0
+
+        detail_id, borrowed_now = active_detail
+        returned_count = min(qty, borrowed_now)
+        remaining_qty = borrowed_now - returned_count
+        if remaining_qty > 0:
+            cur.execute(
+                "UPDATE trBorrowDetail SET intQty = %s, dtUpdated = NOW() "
+                "WHERE intIdBorrowDetail = %s",
+                (remaining_qty, detail_id),
+            )
+        else:
+            cur.execute(
+                "UPDATE trBorrowDetail SET txtStatus = 'returned', dtReturnDate = NOW(), "
+                "dtUpdated = NOW() WHERE intIdBorrowDetail = %s",
+                (detail_id,),
+            )
+    return returned_count
 
 
 def _detect_device():
@@ -92,138 +298,3 @@ def draw_detections(frame, result):
             cv2.LINE_AA,
         )
     return display_frame
-
-
-_cache_mtime = None
-_cache_data = None
-
-
-def _default_state():
-    """State kosong untuk user dan daftar pinjaman"""
-    return {
-        "user": None,
-        "borrowed": [],
-        "borrowed_qty": {},
-    }
-
-
-def load_state():
-    """Baca app_state.json dengan cache berdasarkan waktu file"""
-    global _cache_mtime, _cache_data
-    if not STATE_PATH.exists():
-        _cache_mtime = None
-        _cache_data = _default_state()
-        return _cache_data
-    try:
-        mtime = STATE_PATH.stat().st_mtime
-        if _cache_data is not None and mtime == _cache_mtime:
-            return _cache_data
-        data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-        data.setdefault("user", None)
-        data.setdefault("borrowed", [])
-        data.setdefault("borrowed_qty", {})
-        _cache_mtime = mtime
-        _cache_data = data
-        return data
-    except Exception:
-        return _default_state()
-
-
-def save_state(data):
-    """Tulis state ke app_state.json dan perbarui cache"""
-    global _cache_mtime, _cache_data
-    STATE_PATH.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    _cache_data = data
-    try:
-        _cache_mtime = STATE_PATH.stat().st_mtime
-    except OSError:
-        _cache_mtime = None
-
-
-def set_user(person_name):
-    """Set user sesi aktif"""
-    data = load_state()
-    data["user"] = person_name
-    save_state(data)
-
-
-def clear_user():
-    """Kosongkan user sesi aktif"""
-    data = load_state()
-    data["user"] = None
-    save_state(data)
-
-
-def get_user():
-    """Ambil nama user sesi aktif"""
-    return load_state().get("user")
-
-
-def get_borrowed():
-    """Ambil set nama tools yang sedang dipinjam"""
-    data = load_state()
-    names = set(data.get("borrowed") or [])
-    for tool, qty_value in (data.get("borrowed_qty") or {}).items():
-        if int(qty_value) > 0:
-            names.add(tool)
-    return names
-
-
-def get_borrowed_qty(tool):
-    """Ambil jumlah unit tool yang sedang dipinjam"""
-    return int((load_state().get("borrowed_qty") or {}).get(tool, 0))
-
-
-def get_sisa(tool):
-    """Hitung sisa stok tool dari STOCK_QTY dikurangi yang dipinjam"""
-    if tool not in STOCK_QTY:
-        return None
-    return STOCK_QTY[tool] - get_borrowed_qty(tool)
-
-
-def add_borrowed(tool, qty=1):
-    """Catat pinjam tool (qty untuk STOCK_QTY, toggle untuk tools lain)"""
-    data = load_state()
-    qty = max(1, int(qty))
-    if tool in STOCK_QTY:
-        current_qty = int((data.get("borrowed_qty") or {}).get(tool, 0))
-        remaining = STOCK_QTY[tool] - current_qty
-        taken_count = min(qty, remaining)
-        if taken_count <= 0:
-            return 0
-        data.setdefault("borrowed_qty", {})[tool] = current_qty + taken_count
-        save_state(data)
-        return taken_count
-    borrowed = set(data.get("borrowed") or [])
-    borrowed.add(tool)
-    data["borrowed"] = sorted(borrowed)
-    save_state(data)
-    return 1
-
-
-def remove_borrowed(tool, qty=1):
-    """Catat pengembalian tool (qty untuk STOCK_QTY, hapus dari list untuk tools lain)"""
-    data = load_state()
-    qty = max(1, int(qty))
-    if tool in STOCK_QTY:
-        current_qty = int((data.get("borrowed_qty") or {}).get(tool, 0))
-        returned_count = min(qty, current_qty)
-        if returned_count <= 0:
-            return 0
-        new_qty = current_qty - returned_count
-        borrowed_qty_map = data.setdefault("borrowed_qty", {})
-        if new_qty <= 0:
-            borrowed_qty_map.pop(tool, None)
-        else:
-            borrowed_qty_map[tool] = new_qty
-        save_state(data)
-        return returned_count
-    borrowed = set(data.get("borrowed") or [])
-    if tool not in borrowed:
-        return 0
-    borrowed.discard(tool)
-    data["borrowed"] = sorted(borrowed)
-    save_state(data)
-    return 1
