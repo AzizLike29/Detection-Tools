@@ -16,6 +16,7 @@ from shared_state import (
     STABIL_MIN,
     draw_detections,
     get_borrowed,
+    log_event,
     run_yolo,
 )
 from tts_util import ucap
@@ -89,10 +90,12 @@ while True:
                 ucap(f"Peringatan, alat {tool_label} tidak ada di ruangan")
                 print(f"Hilang {tool}")
                 alerted.add(tool)
+                log_event("cam3", "missing", yolo_class=tool)
             returned_tools = alerted & detected_tools
             for tool in sorted(returned_tools):
                 alerted.discard(tool)
                 print(f"Kembali terdeteksi {tool}")
+                log_event("cam3", "detected", yolo_class=tool)
 
     display_frame = draw_detections(frame, last_result)
     status_label = (
