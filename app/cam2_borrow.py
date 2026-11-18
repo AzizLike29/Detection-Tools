@@ -15,7 +15,6 @@ from shared_state import (
     DEVICE,
     ROOT,
     SAVE_EVERY,
-    STOCK_QTY,
     STABIL_MIN,
     YOLO_EVERY,
     add_borrowed,
@@ -23,6 +22,8 @@ from shared_state import (
     get_borrowed,
     get_borrowed_qty,
     get_user,
+    is_qty_tool,
+    log_event,
     remove_borrowed,
     run_yolo,
 )
@@ -55,18 +56,30 @@ cached_user = None
 user_refresh_time = 0.0
 
 
+ACTION_TEXT = {"borrow": "meminjam", "return": "mengembalikan"}
+
+
 def record_event(person_name, action, tool, display_frame, qty=1):
-    """Simpan foto dan umumkan event pinjam atau kembali"""
+    """Simpan foto, catat ke database, dan umumkan event pinjam atau kembali"""
+    action_text = ACTION_TEXT[action]
     tool_label = tool.replace("_", " ")
     time_text = datetime.now().strftime("%H.%M")
     qty_text = f" ({qty})" if qty > 1 else ""
-    ucap(f"{person_name} {action} alat {tool_label}{qty_text}")
-    print(f"{person_name} {action} alat {tool_label}{qty_text} jam {time_text}")
+    ucap(f"{person_name} {action_text} alat {tool_label}{qty_text}")
+    print(f"{person_name} {action_text} alat {tool_label}{qty_text} jam {time_text}")
     folder = CAPTURE_DIR / tool_label
     folder.mkdir(exist_ok=True)
     capture_path = folder / f"{person_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
     cv2.imwrite(str(capture_path), display_frame)
     print(f"Tersimpan {capture_path}")
+    log_event(
+        "cam2",
+        action,
+        user_name=person_name,
+        yolo_class=tool,
+        qty=qty,
+        img_path=capture_path.relative_to(ROOT).as_posix(),
+    )
 
 
 while True:
@@ -123,14 +136,14 @@ while True:
                     2,
                 )
                 for tool, count in sorted(detected_counts.items()):
-                    if tool in STOCK_QTY:
+                    if is_qty_tool(tool):
                         # Tools stok qty ikut jumlah box
                         if get_borrowed_qty(tool) > 0:
                             returned_count = remove_borrowed(tool, count)
                             if returned_count:
                                 record_event(
                                     session_user,
-                                    "mengembalikan",
+                                    "return",
                                     tool,
                                     event_frame,
                                     returned_count,
@@ -140,7 +153,7 @@ while True:
                             if borrowed_count:
                                 record_event(
                                     session_user,
-                                    "meminjam",
+                                    "borrow",
                                     tool,
                                     event_frame,
                                     borrowed_count,
@@ -151,11 +164,11 @@ while True:
                         if tool in borrowed:
                             remove_borrowed(tool)
                             record_event(
-                                session_user, "mengembalikan", tool, event_frame
+                                session_user, "return", tool, event_frame
                             )
                         else:
                             add_borrowed(tool)
-                            record_event(session_user, "meminjam", tool, event_frame)
+                            record_event(session_user, "borrow", tool, event_frame)
                 last_event_time = current_time
                 was_empty = False
                 candidate_counts = None
