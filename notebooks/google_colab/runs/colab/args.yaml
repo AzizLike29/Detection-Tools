@@ -47,6 +47,7 @@ dnn: false
 plots: true
 nms: null
 tile: false
+tile_overlap: 0.2
 source: null
 vid_stride: 1
 stream_buffer: false
